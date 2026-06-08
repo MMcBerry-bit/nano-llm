@@ -35,13 +35,13 @@ export default function Home() {
 
   // Model Config State
   const [config, setConfig] = useState({
-    contextLength: 64,
+    contextLength: 128,
     embeddingDim: 64,
     numHeads: 4,
-    numLayers: 2,
-    batchSize: 16,
+    numLayers: 3,
+    batchSize: 8,
     learningRate: 0.001,
-    maxSteps: 200,
+    maxSteps: 500,
   });
   
   const [isPreparing, setIsPreparing] = useState(false);
