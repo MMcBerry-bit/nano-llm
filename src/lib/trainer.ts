@@ -1,5 +1,6 @@
 import * as tf from "@tensorflow/tfjs";
 import { CharTokenizer } from "./tokenizer";
+import { NanoTransformer } from "./model";
 
 export interface TrainingConfig {
   contextLength: number;
@@ -22,7 +23,7 @@ export type TrainingCallback = (state: TrainingState) => void;
 
 export class NanoLLMTrainer {
   private tokenizer: CharTokenizer;
-  private model: tf.LayersModel | null = null;
+  private transformer: NanoTransformer | null = null;
   private optimizer: tf.Optimizer | null = null;
   private tokens: number[] = [];
   private config: TrainingConfig | null = null;
@@ -37,98 +38,86 @@ export class NanoLLMTrainer {
     this.config = config;
     this.tokenizer.fit(text);
     this.tokens = this.tokenizer.encode(text);
-    return {
-      vocabSize: this.tokenizer.vocabSize,
-      tokenCount: this.tokens.length,
-    };
+    return { vocabSize: this.tokenizer.vocabSize, tokenCount: this.tokens.length };
   }
 
-  async build(): Promise<tf.LayersModel> {
+  async build(): Promise<void> {
     if (!this.config) throw new Error("Call prepare() first");
-    if (this.model) {
-      this.model.dispose();
-      this.model = null;
+
+    if (this.transformer) {
+      this.transformer.dispose();
+      this.transformer = null;
+    }
+    if (this.optimizer) {
+      this.optimizer.dispose?.();
+      this.optimizer = null;
     }
     this.losses = [];
 
-    const { vocabSize, contextLength, embeddingDim, numHeads, numLayers } =
-      this.config as TrainingConfig & { vocabSize: number };
+    const { contextLength, embeddingDim, numHeads, numLayers, learningRate } = this.config;
 
-    const vSize = this.tokenizer.vocabSize;
-    const { buildModel } = await import("./model");
-    this.model = buildModel({
-      vocabSize: vSize,
+    this.transformer = new NanoTransformer({
+      vocabSize: this.tokenizer.vocabSize,
       contextLength,
       embeddingDim,
       numHeads,
       numLayers,
-      dropoutRate: 0.1,
     });
 
-    this.optimizer = tf.train.adam(this.config.learningRate);
-    return this.model;
+    this.optimizer = tf.train.adam(learningRate);
+
+    await new Promise<void>((r) => setTimeout(r, 0));
   }
 
-  private getBatch(): { xTokens: tf.Tensor; xPos: tf.Tensor; yTokens: tf.Tensor } {
+  private getBatch(): { xTokens: tf.Tensor2D; yTokens: tf.Tensor2D } {
     const { contextLength, batchSize } = this.config!;
     const maxStart = this.tokens.length - contextLength - 1;
-
     const starts = Array.from({ length: batchSize }, () =>
       Math.floor(Math.random() * maxStart)
     );
-
-    const xData: number[][] = starts.map((s) =>
-      this.tokens.slice(s, s + contextLength)
-    );
-    const yData: number[][] = starts.map((s) =>
-      this.tokens.slice(s + 1, s + contextLength + 1)
-    );
-
-    const posData = Array.from({ length: contextLength }, (_, i) => i);
-    const xPos = tf.tile(
-      tf.tensor2d([posData], [1, contextLength], "int32"),
-      [batchSize, 1]
-    );
-
     return {
-      xTokens: tf.tensor2d(xData, [batchSize, contextLength], "int32"),
-      xPos,
-      yTokens: tf.tensor2d(yData, [batchSize, contextLength], "int32"),
+      xTokens: tf.tensor2d(
+        starts.map((s) => this.tokens.slice(s, s + contextLength)),
+        [batchSize, contextLength],
+        "int32"
+      ),
+      yTokens: tf.tensor2d(
+        starts.map((s) => this.tokens.slice(s + 1, s + contextLength + 1)),
+        [batchSize, contextLength],
+        "int32"
+      ),
     };
   }
 
   async train(onUpdate: TrainingCallback): Promise<void> {
-    if (!this.model || !this.optimizer || !this.config) {
+    if (!this.transformer || !this.optimizer || !this.config) {
       throw new Error("Call build() before train()");
     }
     this.shouldStop = false;
-
-    const { maxSteps, contextLength, batchSize } = this.config;
+    const { maxSteps } = this.config;
+    const variables = this.transformer.trainableVariables;
 
     for (let step = 0; step < maxSteps; step++) {
       if (this.shouldStop) break;
 
-      const { xTokens, xPos, yTokens } = this.getBatch();
+      const { xTokens, yTokens } = this.getBatch();
+      const vocabSize = this.tokenizer.vocabSize;
 
-      const lossValue = await tf.tidy(() => {
-        const lossFn = () => {
-          const logits = this.model!.apply([xTokens, xPos]) as tf.Tensor;
-          const logitsFlat = tf.reshape(logits, [-1, this.tokenizer.vocabSize]);
-          const labelsFlat = tf.reshape(yTokens, [-1]);
-          return tf.losses.softmaxCrossEntropy(
-            tf.oneHot(labelsFlat, this.tokenizer.vocabSize),
-            logitsFlat
-          ) as tf.Scalar;
-        };
-        const { value, grads } = tf.variableGrads(lossFn as () => tf.Scalar);
-        (this.optimizer as tf.Optimizer).applyGradients(grads);
-        return value;
-      });
+      const lossFn = (): tf.Scalar => {
+        const logits = this.transformer!.forward(xTokens);
+        const logitsFlat = logits.reshape([-1, vocabSize]) as tf.Tensor2D;
+        const labelsFlat = yTokens.reshape([-1]) as tf.Tensor1D;
+        const labelsOneHot = tf.oneHot(labelsFlat, vocabSize);
+        return tf.losses.softmaxCrossEntropy(labelsOneHot, logitsFlat) as tf.Scalar;
+      };
 
-      const loss = (await lossValue.data())[0];
-      lossValue.dispose();
+      const { value, grads } = tf.variableGrads(lossFn, variables);
+      this.optimizer.applyGradients(grads);
+
+      const loss = (await value.data())[0];
+      value.dispose();
+      Object.values(grads).forEach((g) => (g as tf.Tensor).dispose());
       xTokens.dispose();
-      xPos.dispose();
       yTokens.dispose();
 
       const entry = { step: step + 1, loss };
@@ -141,7 +130,7 @@ export class NanoLLMTrainer {
         losses: [...this.losses],
       });
 
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await new Promise<void>((r) => setTimeout(r, 0));
     }
 
     onUpdate({
@@ -157,8 +146,9 @@ export class NanoLLMTrainer {
   }
 
   generate(prompt: string, maxNewTokens: number, temperature: number): string {
-    if (!this.model || !this.config) return "";
+    if (!this.transformer || !this.config) return "";
     const { contextLength } = this.config;
+    const { vocabSize } = this.tokenizer;
 
     let context = this.tokenizer.encode(prompt);
     const generated: number[] = [];
@@ -168,23 +158,16 @@ export class NanoLLMTrainer {
       while (ctx.length < contextLength) ctx.unshift(0);
 
       const xTokens = tf.tensor2d([ctx], [1, contextLength], "int32");
-      const xPos = tf.tensor2d(
-        [Array.from({ length: contextLength }, (_, j) => j)],
-        [1, contextLength],
-        "int32"
-      );
-
-      const logits = this.model.predict([xTokens, xPos]) as tf.Tensor;
-      const lastLogits = tf.squeeze(logits.slice([0, contextLength - 1, 0], [1, 1, -1]), [0, 1]);
-      const scaled = lastLogits.div(temperature);
-      const probs = tf.softmax(scaled);
-      const probsData = Array.from(probs.dataSync());
+      const logits = this.transformer.forward(xTokens);
+      const lastLogits = logits
+        .slice([0, contextLength - 1, 0], [1, 1, -1])
+        .reshape([vocabSize]) as tf.Tensor1D;
+      const probs = tf.softmax(lastLogits.div(temperature));
+      const probsData = Array.from(probs.dataSync() as Float32Array);
 
       xTokens.dispose();
-      xPos.dispose();
       logits.dispose();
       lastLogits.dispose();
-      scaled.dispose();
       probs.dispose();
 
       const sampled = sampleFromDistribution(probsData);
@@ -205,11 +188,10 @@ export class NanoLLMTrainer {
 }
 
 function sampleFromDistribution(probs: number[]): number {
-  const r = Math.random();
-  let cumulative = 0;
+  let r = Math.random();
   for (let i = 0; i < probs.length; i++) {
-    cumulative += probs[i];
-    if (r < cumulative) return i;
+    r -= probs[i];
+    if (r <= 0) return i;
   }
   return probs.length - 1;
 }
