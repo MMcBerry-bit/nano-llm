@@ -112,7 +112,22 @@ export class NanoLLMTrainer {
       };
 
       const { value, grads } = tf.variableGrads(lossFn, variables);
-      this.optimizer.applyGradients(grads);
+
+      const gradValues = Object.values(grads) as tf.Tensor[];
+      const globalNorm = tf.sqrt(
+        gradValues.map((g) => g.square().sum()).reduce((a, b) => a.add(b))
+      );
+      const clipNorm = 1.0;
+      const scale = tf.minimum(tf.scalar(1.0), tf.scalar(clipNorm).div(globalNorm.add(1e-6)));
+      const clippedGrads: typeof grads = {};
+      for (const key of Object.keys(grads)) {
+        clippedGrads[key] = (grads[key] as tf.Tensor).mul(scale);
+      }
+      globalNorm.dispose();
+      scale.dispose();
+
+      this.optimizer.applyGradients(clippedGrads);
+      Object.values(clippedGrads).forEach((g) => (g as tf.Tensor).dispose());
 
       const loss = (await value.data())[0];
       value.dispose();
