@@ -41,7 +41,6 @@ export default function Home() {
     numLayers: 3,
     batchSize: 8,
     learningRate: 0.001,
-    maxSteps: 3000,
   });
   
   const [isPreparing, setIsPreparing] = useState(false);
@@ -204,29 +203,16 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-sm font-normal text-muted-foreground">Batch Size</Label>
-                    <Input
-                      type="number"
-                      disabled={isTraining || isPrepared}
-                      min={4} max={64}
-                      value={config.batchSize}
-                      onChange={(e) => handleConfigChange("batchSize", parseInt(e.target.value) || 4)}
-                      className="h-9 rounded-lg border-border bg-transparent shadow-sm"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm font-normal text-muted-foreground">Max Steps</Label>
-                    <Input
-                      type="number"
-                      disabled={isTraining || isPrepared}
-                      min={50} max={2000} step={50}
-                      value={config.maxSteps}
-                      onChange={(e) => handleConfigChange("maxSteps", parseInt(e.target.value) || 50)}
-                      className="h-9 rounded-lg border-border bg-transparent shadow-sm"
-                    />
-                  </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-normal text-muted-foreground">Batch Size</Label>
+                  <Input
+                    type="number"
+                    disabled={isTraining || isPrepared}
+                    min={4} max={64}
+                    value={config.batchSize}
+                    onChange={(e) => handleConfigChange("batchSize", parseInt(e.target.value) || 4)}
+                    className="h-9 rounded-lg border-border bg-transparent shadow-sm"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -274,9 +260,9 @@ export default function Home() {
                         <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
                         Training
                       </Badge>
-                    ) : trainingState.step >= config.maxSteps ? (
+                    ) : trainingState.step > 0 ? (
                       <Badge variant="outline" className="border-green-200 text-green-700 bg-green-50/50 font-normal rounded-full">
-                        Complete
+                        Stopped
                       </Badge>
                     ) : (
                       <Badge variant="secondary" className="font-normal rounded-full bg-muted text-muted-foreground">
@@ -288,10 +274,10 @@ export default function Home() {
                     <Button 
                       size="sm" 
                       onClick={startTraining} 
-                      disabled={!isReady || trainingState.step >= config.maxSteps}
+                      disabled={!isReady}
                       className="h-9 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm px-4"
                     >
-                      <Play className="w-4 h-4 mr-1.5" /> Start
+                      <Play className="w-4 h-4 mr-1.5" /> {trainingState.step > 0 ? "Resume" : "Start"}
                     </Button>
                   ) : (
                     <Button 
@@ -309,7 +295,7 @@ export default function Home() {
                 <div className="grid grid-cols-2 gap-4 mb-6">
                   <div className="bg-muted/30 border border-border/50 rounded-xl p-4 flex flex-col">
                     <span className="text-muted-foreground text-sm font-medium mb-1">Step</span>
-                    <span className="text-2xl font-semibold text-foreground tracking-tight">{trainingState.step} <span className="text-muted-foreground text-lg font-normal">/ {config.maxSteps}</span></span>
+                    <span className="text-2xl font-semibold text-foreground tracking-tight">{trainingState.step.toLocaleString()}</span>
                   </div>
                   <div className="bg-muted/30 border border-border/50 rounded-xl p-4 flex flex-col">
                     <span className="text-muted-foreground text-sm font-medium mb-1">Loss</span>
@@ -317,13 +303,17 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="mb-6 space-y-2">
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Progress</span>
-                    <span>{Math.round((trainingState.step / config.maxSteps) * 100)}%</span>
+                {isTraining && (
+                  <div className="mb-6 space-y-2">
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Running</span>
+                      <span className="animate-pulse">∞ infinite steps</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted/50 overflow-hidden">
+                      <div className="h-full bg-primary rounded-full animate-[progress-infinite_1.5s_ease-in-out_infinite]" style={{width: '40%', animation: 'progressSlide 1.5s ease-in-out infinite'}} />
+                    </div>
                   </div>
-                  <Progress value={(trainingState.step / config.maxSteps) * 100} className="h-2 rounded-full bg-muted/50 [&>div]:bg-primary" />
-                </div>
+                )}
 
                 <div className="flex-1 bg-background border border-border/50 rounded-xl min-h-[200px] p-4">
                   <ResponsiveContainer width="100%" height="100%">
