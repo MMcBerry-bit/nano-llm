@@ -103,7 +103,7 @@ export class NanoTransformer {
     const lowerTri = tf.linalg.bandPart(tf.ones([seqLen, seqLen]), -1, 0);
     const causalMask = tf.where(
       lowerTri.equal(tf.scalar(0)),
-      tf.fill([seqLen, seqLen], -1e9),
+      tf.fill([seqLen, seqLen], -1e4),
       tf.zeros([seqLen, seqLen])
     );
     scores = scores.add(causalMask);
