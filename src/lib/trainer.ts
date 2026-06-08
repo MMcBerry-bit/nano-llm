@@ -9,7 +9,6 @@ export interface TrainingConfig {
   numLayers: number;
   batchSize: number;
   learningRate: number;
-  maxSteps: number;
 }
 
 export interface TrainingState {
@@ -94,12 +93,10 @@ export class NanoLLMTrainer {
       throw new Error("Call build() before train()");
     }
     this.shouldStop = false;
-    const { maxSteps } = this.config;
     const variables = this.transformer.trainableVariables;
+    let step = 0;
 
-    for (let step = 0; step < maxSteps; step++) {
-      if (this.shouldStop) break;
-
+    while (!this.shouldStop) {
       const { xTokens, yTokens } = this.getBatch();
       const vocabSize = this.tokenizer.vocabSize;
 
@@ -135,13 +132,14 @@ export class NanoLLMTrainer {
       xTokens.dispose();
       yTokens.dispose();
 
-      const entry = { step: step + 1, loss };
+      step++;
+      const entry = { step, loss };
       this.losses.push(entry);
 
       onUpdate({
-        step: step + 1,
+        step,
         loss,
-        isTraining: !this.shouldStop,
+        isTraining: true,
         losses: [...this.losses],
       });
 
