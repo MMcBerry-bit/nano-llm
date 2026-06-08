@@ -71,6 +71,14 @@ export class NanoTransformer {
     return x.mul(tf.sigmoid(x.mul(1.702)));
   }
 
+  private mat2d(x: tf.Tensor, w: tf.Variable): tf.Tensor {
+    const batchSeq = x.shape.slice(0, -1).reduce((a, b) => a * (b as number), 1);
+    const inDim = x.shape[x.shape.length - 1] as number;
+    const outDim = w.shape[1] as number;
+    const origShape = x.shape.slice(0, -1) as number[];
+    return x.reshape([batchSeq, inDim]).matMul(w).reshape([...origShape, outDim]);
+  }
+
   private selfAttention(x: tf.Tensor, attn: AttnWeights): tf.Tensor {
     const { numHeads, embeddingDim } = this.config;
     const headDim = Math.floor(embeddingDim / numHeads);
@@ -78,7 +86,7 @@ export class NanoTransformer {
     const seqLen = x.shape[1] as number;
     const batchSize = x.shape[0] as number;
 
-    const qkv = x.matMul(attn.qkv);
+    const qkv = this.mat2d(x, attn.qkv);
     const q = qkv.slice([0, 0, 0], [-1, -1, embeddingDim]);
     const k = qkv.slice([0, 0, embeddingDim], [-1, -1, embeddingDim]);
     const v = qkv.slice([0, 0, 2 * embeddingDim], [-1, -1, embeddingDim]);
@@ -103,7 +111,7 @@ export class NanoTransformer {
 
     const out = attnW.matMul(vH);
     const outFlat = out.transpose([0, 2, 1, 3]).reshape([batchSize, seqLen, embeddingDim]);
-    return outFlat.matMul(attn.proj).add(attn.projBias);
+    return this.mat2d(outFlat, attn.proj).add(attn.projBias);
   }
 
   forward(tokens: tf.Tensor2D): tf.Tensor3D {
@@ -125,12 +133,12 @@ export class NanoTransformer {
       x = x.add(this.selfAttention(n1, block.attn));
 
       const n2 = this.layerNorm(x, block.ln2);
-      const ff = this.gelu(n2.matMul(block.ffn.w1).add(block.ffn.b1));
-      x = x.add(ff.matMul(block.ffn.w2).add(block.ffn.b2));
+      const ff = this.gelu(this.mat2d(n2, block.ffn.w1).add(block.ffn.b1));
+      x = x.add(this.mat2d(ff, block.ffn.w2).add(block.ffn.b2));
     }
 
     x = this.layerNorm(x, this.lnFinal);
-    return x.matMul(this.lmHead) as tf.Tensor3D;
+    return this.mat2d(x, this.lmHead) as tf.Tensor3D;
   }
 
   get trainableVariables(): tf.Variable[] {
