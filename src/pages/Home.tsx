@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useMemo } from "react";
 import { useTrainer } from "../hooks/useTrainer";
 import { SAMPLE_PYTHON_CODE, SAMPLE_JS_CODE } from "../lib/sampleCode";
 import { Button } from "@/components/ui/button";
@@ -77,6 +77,13 @@ export default function Home() {
     if (!isReady || !prompt) return;
     generate(prompt, maxNewTokens, temperature);
   };
+
+  const chartData = useMemo(() => {
+    const losses = trainingState.losses;
+    if (losses.length <= 500) return losses;
+    const step = Math.ceil(losses.length / 500);
+    return losses.filter((_, i) => i % step === 0);
+  }, [trainingState.losses]);
 
   return (
     <div className="min-h-screen w-full bg-background text-foreground p-6 font-sans">
@@ -317,7 +324,7 @@ export default function Home() {
 
                 <div className="flex-1 bg-background border border-border/50 rounded-xl min-h-[200px] p-4">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={trainingState.losses} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                    <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" opacity={0.5} />
                       <XAxis 
                         dataKey="step" 
