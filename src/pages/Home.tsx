@@ -41,7 +41,7 @@ export default function Home() {
     numLayers: 3,
     batchSize: 8,
     learningRate: 0.001,
-    maxSteps: 500,
+    maxSteps: 3000,
   });
   
   const [isPreparing, setIsPreparing] = useState(false);
