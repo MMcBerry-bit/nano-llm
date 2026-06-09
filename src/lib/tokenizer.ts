@@ -21,4 +21,10 @@ export class CharTokenizer {
   getVocab(): string[] {
     return [...this.idxToChar];
   }
+
+  setVocab(vocab: string[]): void {
+    this.idxToChar = [...vocab];
+    this.charToIdx = new Map(vocab.map((c, i) => [c, i]));
+    this.vocabSize = vocab.length;
+  }
 }
