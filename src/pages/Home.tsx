@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { useTrainer } from "../hooks/useTrainer";
 import { SAMPLE_PYTHON_CODE, SAMPLE_JS_CODE } from "../lib/sampleCode";
 import { Button } from "@/components/ui/button";
@@ -9,10 +9,9 @@ import { Slider } from "@/components/ui/slider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import { Play, Square, Settings2, Database, Zap, Loader2, RotateCcw, CheckCircle2 } from "lucide-react";
+import { Play, Square, Settings2, Database, Zap, Loader2, RotateCcw, CheckCircle2, Download, Upload, History } from "lucide-react";
 
 export default function Home() {
   const {
@@ -23,17 +22,18 @@ export default function Home() {
     vocabSize,
     tokenCount,
     generatedText,
+    hasSavedState,
     prepare,
     startTraining,
     stopTraining,
     generate,
     reset,
+    restoreLastSession,
+    saveToFile,
+    loadFromFile,
   } = useTrainer();
 
-  // Data Section State
   const [trainingText, setTrainingText] = useState("");
-
-  // Model Config State
   const [config, setConfig] = useState({
     contextLength: 128,
     embeddingDim: 64,
@@ -42,15 +42,13 @@ export default function Home() {
     batchSize: 8,
     learningRate: 0.001,
   });
-  
   const [isPreparing, setIsPreparing] = useState(false);
-
-  // Generation Section State
+  const [isRestoring, setIsRestoring] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [maxNewTokens, setMaxNewTokens] = useState(100);
   const [temperature, setTemperature] = useState(0.8);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Enforce embeddingDim divisible by numHeads
   const handleConfigChange = (key: keyof typeof config, value: number) => {
     setConfig((prev) => {
       const next = { ...prev, [key]: value };
@@ -78,6 +76,22 @@ export default function Home() {
     generate(prompt, maxNewTokens, temperature);
   };
 
+  const handleRestore = async () => {
+    setIsRestoring(true);
+    try {
+      await restoreLastSession();
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  const handleFileLoad = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    await loadFromFile(file);
+  };
+
   const chartData = useMemo(() => {
     const losses = trainingState.losses;
     if (losses.length <= 500) return losses;
@@ -98,16 +112,78 @@ export default function Home() {
               <p className="text-sm text-muted-foreground">In-browser transformer trainer</p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={reset} disabled={isTraining} className="rounded-lg text-muted-foreground hover:text-foreground">
-            <RotateCcw className="w-4 h-4 mr-2" />
-            Reset
-          </Button>
+          <div className="flex items-center gap-2">
+            {hasSavedState && !isPrepared && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRestore}
+                disabled={isRestoring}
+                className="rounded-lg text-primary border-primary/30 hover:bg-primary/5"
+              >
+                {isRestoring ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <History className="w-4 h-4 mr-2" />
+                )}
+                Restore last session
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={saveToFile}
+              disabled={!isReady || trainingState.step === 0 || isTraining}
+              className="rounded-lg text-muted-foreground hover:text-foreground"
+              title="Download model as file"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Save file
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isTraining}
+              className="rounded-lg text-muted-foreground hover:text-foreground"
+              title="Load model from file"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Load file
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={handleFileLoad}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={reset}
+              disabled={isTraining}
+              className="rounded-lg text-muted-foreground hover:text-foreground"
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Reset
+            </Button>
+          </div>
         </header>
 
+        {isPrepared && trainingState.step > 0 && (
+          <div className="flex items-center justify-between bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 text-sm">
+            <span className="text-muted-foreground">
+              Session auto-saved after each stop — click <strong>Save file</strong> to export a portable copy.
+            </span>
+            <Button variant="ghost" size="sm" onClick={saveToFile} disabled={isTraining} className="text-primary hover:text-primary/80 h-8 px-3 rounded-lg">
+              <Download className="w-3.5 h-3.5 mr-1.5" /> Download
+            </Button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* LEFT COLUMN: Data & Config */}
           <div className="lg:col-span-4 space-y-6">
-            {/* DATA SECTION */}
             <Card className="bg-card border-border rounded-2xl shadow-sm">
               <CardHeader className="pb-4">
                 <CardTitle className="text-base font-medium flex items-center gap-2">
@@ -140,7 +216,6 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {/* MODEL CONFIG SECTION */}
             <Card className="bg-card border-border rounded-2xl shadow-sm">
               <CardHeader className="pb-4">
                 <CardTitle className="text-base font-medium flex items-center gap-2">
@@ -179,17 +254,17 @@ export default function Home() {
                 <div className="grid grid-cols-2 gap-4 pt-2">
                   <div className="space-y-2">
                     <Label className="text-sm font-normal text-muted-foreground">Heads</Label>
-                    <ToggleGroup 
-                      type="single" 
-                      value={config.numHeads.toString()} 
+                    <ToggleGroup
+                      type="single"
+                      value={config.numHeads.toString()}
                       onValueChange={(v) => v && handleConfigChange("numHeads", parseInt(v))}
                       disabled={isTraining || isPrepared}
                       className="justify-start gap-1"
                     >
                       {["1", "2", "4", "8"].map(val => (
-                        <ToggleGroupItem 
-                          key={val} 
-                          value={val} 
+                        <ToggleGroupItem
+                          key={val}
+                          value={val}
                           className="flex-1 rounded-lg h-9 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground border border-transparent data-[state=off]:border-border data-[state=off]:hover:bg-muted"
                         >
                           {val}
@@ -234,8 +309,8 @@ export default function Home() {
                   />
                 </div>
 
-                <Button 
-                  className="w-full rounded-xl h-11 font-medium bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm" 
+                <Button
+                  className="w-full rounded-xl h-11 font-medium bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
                   onClick={handlePrepare}
                   disabled={isTraining || isPrepared || !trainingText || isPreparing}
                 >
@@ -251,10 +326,7 @@ export default function Home() {
             </Card>
           </div>
 
-          {/* RIGHT COLUMN: Training & Generation */}
           <div className="lg:col-span-8 space-y-6">
-            
-            {/* TRAINING SECTION */}
             <Card className="bg-card border-border rounded-2xl shadow-sm flex flex-col min-h-[420px]">
               <CardHeader className="pb-4 flex-row items-center justify-between space-y-0 border-b border-border/50">
                 <CardTitle className="text-base font-medium flex items-center gap-2">
@@ -278,18 +350,18 @@ export default function Home() {
                     )}
                   </div>
                   {!isTraining ? (
-                    <Button 
-                      size="sm" 
-                      onClick={startTraining} 
+                    <Button
+                      size="sm"
+                      onClick={startTraining}
                       disabled={!isReady}
                       className="h-9 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm px-4"
                     >
                       <Play className="w-4 h-4 mr-1.5" /> {trainingState.step > 0 ? "Resume" : "Start"}
                     </Button>
                   ) : (
-                    <Button 
-                      size="sm" 
-                      onClick={stopTraining} 
+                    <Button
+                      size="sm"
+                      onClick={stopTraining}
                       variant="outline"
                       className="h-9 rounded-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 shadow-sm px-4"
                     >
@@ -317,7 +389,7 @@ export default function Home() {
                       <span className="animate-pulse">∞ infinite steps</span>
                     </div>
                     <div className="h-2 rounded-full bg-muted/50 overflow-hidden">
-                      <div className="h-full bg-primary rounded-full animate-[progress-infinite_1.5s_ease-in-out_infinite]" style={{width: '40%', animation: 'progressSlide 1.5s ease-in-out infinite'}} />
+                      <div className="h-full bg-primary rounded-full" style={{width: '40%', animation: 'progressSlide 1.5s ease-in-out infinite'}} />
                     </div>
                   </div>
                 )}
@@ -326,31 +398,31 @@ export default function Home() {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" opacity={0.5} />
-                      <XAxis 
-                        dataKey="step" 
-                        stroke="hsl(var(--muted-foreground))" 
-                        fontSize={11} 
-                        tickLine={false}
-                        axisLine={false}
-                        tickMargin={10}
-                      />
-                      <YAxis 
-                        domain={['auto', 'auto']} 
-                        stroke="hsl(var(--muted-foreground))" 
+                      <XAxis
+                        dataKey="step"
+                        stroke="hsl(var(--muted-foreground))"
                         fontSize={11}
                         tickLine={false}
                         axisLine={false}
                         tickMargin={10}
                       />
-                      <Tooltip 
+                      <YAxis
+                        domain={['auto', 'auto']}
+                        stroke="hsl(var(--muted-foreground))"
+                        fontSize={11}
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={10}
+                      />
+                      <Tooltip
                         contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px', fontSize: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)' }}
                         itemStyle={{ color: 'hsl(var(--primary))', fontWeight: 500 }}
                         labelStyle={{ color: 'hsl(var(--muted-foreground))', marginBottom: '4px' }}
                       />
-                      <Line 
-                        type="monotone" 
-                        dataKey="loss" 
-                        stroke="hsl(var(--primary))" 
+                      <Line
+                        type="monotone"
+                        dataKey="loss"
+                        stroke="hsl(var(--primary))"
                         strokeWidth={2.5}
                         dot={false}
                         isAnimationActive={false}
@@ -361,7 +433,6 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {/* GENERATION SECTION */}
             <Card className="bg-card border-border rounded-2xl shadow-sm">
               <CardHeader className="pb-4">
                 <CardTitle className="text-base font-medium flex items-center gap-2">
@@ -372,7 +443,7 @@ export default function Home() {
                 <div className="flex gap-4 items-end">
                   <div className="flex-1 space-y-2">
                     <Label className="text-sm font-normal text-muted-foreground">Prompt</Label>
-                    <Input 
+                    <Input
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                       placeholder="def "
@@ -380,7 +451,7 @@ export default function Home() {
                       disabled={!isReady || trainingState.step === 0}
                     />
                   </div>
-                  <Button 
+                  <Button
                     onClick={handleGenerate}
                     disabled={!isReady || trainingState.step === 0 || !prompt}
                     className="h-11 rounded-xl font-medium px-6 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
@@ -435,7 +506,6 @@ export default function Home() {
                 </div>
               </CardContent>
             </Card>
-
           </div>
         </div>
       </div>
