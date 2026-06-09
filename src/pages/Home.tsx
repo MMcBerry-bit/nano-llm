@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useRef } from "react";
-import { useTrainer } from "../hooks/useTrainer";
+import React, { useState, useMemo, useRef, useEffect } from "react";
+import { useTrainer, ModelMeta } from "../hooks/useTrainer";
 import { SAMPLE_PYTHON_CODE, SAMPLE_JS_CODE } from "../lib/sampleCode";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,8 +13,18 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianG
 import {
   Play, Square, Settings2, Database, Zap, Loader2, RotateCcw,
   CheckCircle2, Download, Upload, History, Share2, Hash,
-  ChevronDown, ChevronUp, X, Copy, Check,
+  ChevronDown, ChevronUp, Copy, Check, Trash2, RefreshCw, FolderOpen,
 } from "lucide-react";
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 export default function Home() {
   const {
@@ -22,7 +32,7 @@ export default function Home() {
     vocabSize, tokenCount, generatedText, hasSavedState,
     prepare, startTraining, stopTraining, generate, reset,
     restoreLastSession, saveToFile, loadFromFile,
-    shareOnline, loadByCode,
+    shareOnline, loadByCode, fetchLibrary, deleteModel,
   } = useTrainer();
 
   const [trainingText, setTrainingText] = useState("");
@@ -47,6 +57,32 @@ export default function Home() {
   const [loadError, setLoadError] = useState("");
 
   const [inspectorOpen, setInspectorOpen] = useState(false);
+
+  // Library state
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [library, setLibrary] = useState<ModelMeta[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState("");
+  const [loadingCode, setLoadingCode] = useState<string | null>(null);
+  const [deletingCode, setDeletingCode] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  const loadLibrary = async () => {
+    setLibraryLoading(true);
+    setLibraryError("");
+    try {
+      const models = await fetchLibrary();
+      setLibrary(models);
+    } catch {
+      setLibraryError("Couldn't reach server");
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (libraryOpen) loadLibrary();
+  }, [libraryOpen]);
 
   const handleConfigChange = (key: keyof typeof config, value: number) => {
     setConfig((prev) => {
@@ -89,6 +125,7 @@ export default function Home() {
     try {
       const code = await shareOnline();
       setShareCode(code);
+      if (libraryOpen) await loadLibrary();
     } catch {
       setShareError("Upload failed — check connection");
     } finally {
@@ -110,7 +147,26 @@ export default function Home() {
     }
   };
 
-  const copyCode = () => {
+  const handleLibraryLoad = async (code: string) => {
+    setLoadingCode(code);
+    try { await loadByCode(code); } catch { /* silent */ } finally { setLoadingCode(null); }
+  };
+
+  const handleLibraryDelete = async (code: string) => {
+    setDeletingCode(code);
+    try {
+      await deleteModel(code);
+      setLibrary((prev) => prev.filter((m) => m.code !== code));
+    } catch { /* silent */ } finally { setDeletingCode(null); }
+  };
+
+  const copyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode(null), 2000);
+  };
+
+  const copyShareCode = () => {
     navigator.clipboard.writeText(shareCode);
     setCodeCopied(true);
     setTimeout(() => setCodeCopied(false), 2000);
@@ -124,9 +180,7 @@ export default function Home() {
   }, [trainingState.losses]);
 
   const bestLoss = useMemo(() =>
-    trainingState.losses.length
-      ? Math.min(...trainingState.losses.map((l) => l.loss))
-      : null,
+    trainingState.losses.length ? Math.min(...trainingState.losses.map((l) => l.loss)) : null,
     [trainingState.losses]
   );
 
@@ -137,9 +191,7 @@ export default function Home() {
         {/* HEADER */}
         <header className="flex items-center justify-between border-b border-border pb-6">
           <div className="flex items-center gap-3">
-            <div className="bg-primary/10 text-primary p-2 rounded-xl">
-              <Zap className="w-5 h-5" />
-            </div>
+            <div className="bg-primary/10 text-primary p-2 rounded-xl"><Zap className="w-5 h-5" /></div>
             <div>
               <h1 className="text-xl font-bold tracking-tight">Nano LLM</h1>
               <p className="text-sm text-muted-foreground">In-browser transformer trainer</p>
@@ -155,7 +207,7 @@ export default function Home() {
             )}
             <Button variant="ghost" size="sm" onClick={saveToFile}
               disabled={!isReady || trainingState.step === 0 || isTraining}
-              className="rounded-lg text-muted-foreground hover:text-foreground" title="Download model as file">
+              className="rounded-lg text-muted-foreground hover:text-foreground">
               <Download className="w-4 h-4 mr-2" /> Save file
             </Button>
             <Button variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()}
@@ -172,13 +224,12 @@ export default function Home() {
 
         {/* SHARE / LOAD ONLINE BAR */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Share online */}
           <Card className="bg-card border-border rounded-2xl shadow-sm">
             <CardContent className="p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Share2 className="w-4 h-4 text-primary" />
                 <span className="text-sm font-medium">Share online</span>
-                <span className="text-xs text-muted-foreground ml-auto">Upload model → get a code</span>
+                <span className="text-xs text-muted-foreground ml-auto">Upload → get a code</span>
               </div>
               <div className="flex gap-2">
                 <Button size="sm" onClick={handleShare}
@@ -190,7 +241,7 @@ export default function Home() {
                 {shareCode && (
                   <div className="flex items-center gap-2 flex-1 bg-primary/5 border border-primary/20 rounded-lg px-3">
                     <span className="font-mono font-bold text-primary tracking-widest text-sm">{shareCode}</span>
-                    <Button variant="ghost" size="sm" onClick={copyCode} className="h-7 w-7 p-0 ml-auto">
+                    <Button variant="ghost" size="sm" onClick={copyShareCode} className="h-7 w-7 p-0 ml-auto">
                       {codeCopied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
                     </Button>
                   </div>
@@ -200,24 +251,19 @@ export default function Home() {
             </CardContent>
           </Card>
 
-          {/* Load by code */}
           <Card className="bg-card border-border rounded-2xl shadow-sm">
             <CardContent className="p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Hash className="w-4 h-4 text-primary" />
                 <span className="text-sm font-medium">Load by code</span>
-                <span className="text-xs text-muted-foreground ml-auto">Enter a share code to load remotely</span>
+                <span className="text-xs text-muted-foreground ml-auto">Enter a share code</span>
               </div>
               <div className="flex gap-2">
-                <Input
-                  value={loadCode}
-                  onChange={(e) => { setLoadCode(e.target.value.toUpperCase()); setLoadError(""); }}
+                <Input value={loadCode} onChange={(e) => { setLoadCode(e.target.value.toUpperCase()); setLoadError(""); }}
                   onKeyDown={(e) => e.key === "Enter" && handleLoadCode()}
-                  placeholder="ABC123"
-                  maxLength={6}
+                  placeholder="ABC123" maxLength={6}
                   className="font-mono tracking-widest text-center h-9 rounded-lg border-border bg-transparent shadow-sm text-sm uppercase"
-                  disabled={isLoadingCode || isTraining}
-                />
+                  disabled={isLoadingCode || isTraining} />
                 <Button size="sm" onClick={handleLoadCode}
                   disabled={!loadCode.trim() || isLoadingCode || isTraining}
                   className="rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4 text-sm">
@@ -229,13 +275,99 @@ export default function Home() {
           </Card>
         </div>
 
+        {/* REMOTE FILE LIBRARY */}
+        <Card className="bg-card border-border rounded-2xl shadow-sm">
+          <button onClick={() => setLibraryOpen((o) => !o)}
+            className="w-full flex items-center justify-between px-5 py-4 text-sm font-medium hover:bg-muted/30 rounded-2xl transition-colors">
+            <div className="flex items-center gap-2">
+              <FolderOpen className="w-4 h-4 text-primary" />
+              <span>Remote File Library</span>
+              {library.length > 0 && (
+                <Badge variant="secondary" className="bg-primary/10 text-primary rounded-full text-xs font-normal">
+                  {library.length} model{library.length !== 1 ? "s" : ""}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {libraryOpen && (
+                <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); loadLibrary(); }}
+                  disabled={libraryLoading} className="h-7 w-7 p-0 rounded-lg">
+                  <RefreshCw className={`w-3.5 h-3.5 ${libraryLoading ? "animate-spin" : ""}`} />
+                </Button>
+              )}
+              {libraryOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+            </div>
+          </button>
+
+          {libraryOpen && (
+            <CardContent className="pt-0 pb-5 px-5">
+              {libraryLoading && library.length === 0 ? (
+                <div className="flex items-center justify-center py-10 text-muted-foreground text-sm gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                </div>
+              ) : libraryError ? (
+                <div className="text-center py-8 text-sm text-red-500">{libraryError}</div>
+              ) : library.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground text-sm">
+                  No models uploaded yet — train a model and click <strong>Share</strong>.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {library.map((m) => (
+                    <div key={m.code}
+                      className="border border-border/60 rounded-xl p-4 bg-background hover:border-primary/30 hover:bg-primary/2 transition-colors group">
+                      {/* Code + copy + delete */}
+                      <div className="flex items-center justify-between mb-3">
+                        <button onClick={() => copyCode(m.code)}
+                          className="flex items-center gap-1.5 font-mono font-bold text-primary tracking-widest text-base hover:opacity-70 transition-opacity">
+                          {m.code}
+                          {copiedCode === m.code
+                            ? <Check className="w-3 h-3 text-green-600" />
+                            : <Copy className="w-3 h-3 opacity-0 group-hover:opacity-60" />}
+                        </button>
+                        <button onClick={() => handleLibraryDelete(m.code)}
+                          disabled={deletingCode === m.code}
+                          className="opacity-0 group-hover:opacity-60 hover:opacity-100 text-muted-foreground hover:text-red-500 transition-all">
+                          {deletingCode === m.code
+                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : <Trash2 className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+
+                      {/* Stats */}
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-3">
+                        <div className="text-muted-foreground">Steps</div>
+                        <div className="font-medium text-right">{m.steps.toLocaleString()}</div>
+                        <div className="text-muted-foreground">Best loss</div>
+                        <div className="font-medium text-right text-primary">{m.bestLoss.toFixed(4)}</div>
+                        <div className="text-muted-foreground">Vocab</div>
+                        <div className="font-medium text-right">{m.vocabSize} chars</div>
+                        <div className="text-muted-foreground">Layers / Dim</div>
+                        <div className="font-medium text-right">{m.config.numLayers} × {m.config.embeddingDim}</div>
+                      </div>
+
+                      {/* Uploaded time + load button */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">{timeAgo(m.createdAt)}</span>
+                        <Button size="sm" onClick={() => handleLibraryLoad(m.code)}
+                          disabled={loadingCode === m.code || isTraining}
+                          className="h-7 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs px-3">
+                          {loadingCode === m.code ? <Loader2 className="w-3 h-3 animate-spin" /> : "Load"}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
+
         {/* MODEL INSPECTOR */}
         {isPrepared && (
           <Card className="bg-card border-border rounded-2xl shadow-sm">
-            <button
-              onClick={() => setInspectorOpen((o) => !o)}
-              className="w-full flex items-center justify-between px-5 py-4 text-sm font-medium hover:bg-muted/30 rounded-2xl transition-colors"
-            >
+            <button onClick={() => setInspectorOpen((o) => !o)}
+              className="w-full flex items-center justify-between px-5 py-4 text-sm font-medium hover:bg-muted/30 rounded-2xl transition-colors">
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4 text-primary" />
                 <span>Model Inspector</span>
@@ -271,7 +403,6 @@ export default function Home() {
                 <div>
                   <div className="text-xs text-muted-foreground mb-2">Vocabulary ({vocabSize} characters)</div>
                   <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
-                    {/* Show vocab from trainingText since we have it */}
                     {Array.from(new Set(trainingText.split(""))).sort().map((ch) => (
                       <span key={ch} className="font-mono text-xs bg-muted/50 border border-border/50 rounded px-1.5 py-0.5">
                         {ch === " " ? "·" : ch === "\n" ? "↵" : ch === "\t" ? "→" : ch}
@@ -282,7 +413,7 @@ export default function Home() {
 
                 {trainingState.losses.length > 0 && (
                   <div>
-                    <div className="text-xs text-muted-foreground mb-2">Loss over last 20 steps</div>
+                    <div className="text-xs text-muted-foreground mb-2">Last 20 steps</div>
                     <div className="overflow-x-auto">
                       <table className="text-xs w-full">
                         <tbody>
@@ -449,12 +580,10 @@ export default function Home() {
                     </span>
                   </div>
                 </div>
-
                 {isTraining && (
                   <div className="mb-6 space-y-2">
                     <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>Running</span>
-                      <span className="animate-pulse">∞ infinite steps</span>
+                      <span>Running</span><span className="animate-pulse">∞ infinite steps</span>
                     </div>
                     <div className="h-2 rounded-full bg-muted/50 overflow-hidden">
                       <div className="h-full bg-primary rounded-full"
@@ -462,7 +591,6 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-
                 <div className="flex-1 bg-background border border-border/50 rounded-xl min-h-[200px] p-4">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
