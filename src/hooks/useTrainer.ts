@@ -4,6 +4,22 @@ import { NanoLLMTrainer, TrainingConfig, TrainingState, SavedState } from "../li
 const STORAGE_KEY = "nano-llm-model-v1";
 const API_BASE = (import.meta.env.VITE_API_BASE as string) || "http://localhost:8080";
 
+export interface ModelMeta {
+  code: string;
+  createdAt: string;
+  steps: number;
+  loss: number;
+  bestLoss: number;
+  vocabSize: number;
+  config: {
+    contextLength: number;
+    embeddingDim: number;
+    numLayers: number;
+    numHeads: number;
+    learningRate: number;
+  };
+}
+
 export interface UseTrainerReturn {
   isReady: boolean;
   isTraining: boolean;
@@ -23,6 +39,8 @@ export interface UseTrainerReturn {
   loadFromFile: (file: File) => Promise<void>;
   shareOnline: () => Promise<string>;
   loadByCode: (code: string) => Promise<void>;
+  fetchLibrary: () => Promise<ModelMeta[]>;
+  deleteModel: (code: string) => Promise<void>;
 }
 
 const DEFAULT_STATE: TrainingState = {
@@ -71,7 +89,6 @@ export function useTrainer(): UseTrainerReturn {
     setIsReady(false);
     setIsPrepared(false);
     setGeneratedText("");
-
     await trainer.build();
     setIsReady(true);
     setIsPrepared(true);
@@ -81,12 +98,10 @@ export function useTrainer(): UseTrainerReturn {
     if (!isReady) return;
     setIsTraining(true);
     setTrainingState((s) => ({ ...s, isTraining: true }));
-
     await trainerRef.current.train((state) => {
       setTrainingState(state);
       if (!state.isTraining) setIsTraining(false);
     });
-
     setIsTraining(false);
   }, [isReady]);
 
@@ -105,8 +120,7 @@ export function useTrainer(): UseTrainerReturn {
       const text = trainerRef.current.generate(prompt, maxNewTokens, temperature);
       setGeneratedText(text);
       return text;
-    },
-    []
+    }, []
   );
 
   const reset = useCallback(() => {
@@ -176,24 +190,22 @@ export function useTrainer(): UseTrainerReturn {
     } catch (_) {}
   }, [applyLoadedState]);
 
+  const fetchLibrary = useCallback(async (): Promise<ModelMeta[]> => {
+    const resp = await fetch(`${API_BASE}/api/models`);
+    if (!resp.ok) throw new Error("Failed to fetch library");
+    return resp.json();
+  }, []);
+
+  const deleteModel = useCallback(async (code: string): Promise<void> => {
+    const resp = await fetch(`${API_BASE}/api/models/${code.toUpperCase()}`, { method: "DELETE" });
+    if (!resp.ok) throw new Error("Failed to delete");
+  }, []);
+
   return {
-    isReady,
-    isTraining,
-    isPrepared,
-    trainingState,
-    vocabSize,
-    tokenCount,
-    generatedText,
-    hasSavedState,
-    prepare,
-    startTraining,
-    stopTraining,
-    generate,
-    reset,
-    restoreLastSession,
-    saveToFile,
-    loadFromFile,
-    shareOnline,
-    loadByCode,
+    isReady, isTraining, isPrepared, trainingState,
+    vocabSize, tokenCount, generatedText, hasSavedState,
+    prepare, startTraining, stopTraining, generate, reset,
+    restoreLastSession, saveToFile, loadFromFile,
+    shareOnline, loadByCode, fetchLibrary, deleteModel,
   };
 }
