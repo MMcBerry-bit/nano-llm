@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from "react";
 import { NanoLLMTrainer, TrainingConfig, TrainingState, SavedState } from "../lib/trainer";
 
 const STORAGE_KEY = "nano-llm-model-v1";
+const API_BASE = (import.meta.env.VITE_API_BASE as string) || "http://localhost:8080";
 
 export interface UseTrainerReturn {
   isReady: boolean;
@@ -20,6 +21,8 @@ export interface UseTrainerReturn {
   restoreLastSession: () => Promise<void>;
   saveToFile: () => void;
   loadFromFile: (file: File) => Promise<void>;
+  shareOnline: () => Promise<string>;
+  loadByCode: (code: string) => Promise<void>;
 }
 
 const DEFAULT_STATE: TrainingState = {
@@ -149,6 +152,30 @@ export function useTrainer(): UseTrainerReturn {
     } catch (_) {}
   }, [applyLoadedState]);
 
+  const shareOnline = useCallback(async (): Promise<string> => {
+    const state = trainerRef.current.getState();
+    const resp = await fetch(`${API_BASE}/api/models`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    });
+    if (!resp.ok) throw new Error("Upload failed");
+    const { code } = await resp.json();
+    return code as string;
+  }, []);
+
+  const loadByCode = useCallback(async (code: string): Promise<void> => {
+    const resp = await fetch(`${API_BASE}/api/models/${code.trim().toUpperCase()}`);
+    if (!resp.ok) throw new Error("Code not found");
+    const state = (await resp.json()) as SavedState;
+    const result = await trainerRef.current.loadState(state);
+    applyLoadedState(result);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      setHasSavedState(true);
+    } catch (_) {}
+  }, [applyLoadedState]);
+
   return {
     isReady,
     isTraining,
@@ -166,5 +193,7 @@ export function useTrainer(): UseTrainerReturn {
     restoreLastSession,
     saveToFile,
     loadFromFile,
+    shareOnline,
+    loadByCode,
   };
 }
