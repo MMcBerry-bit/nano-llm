@@ -26,8 +26,15 @@ if (!basePath) {
   );
 }
 
+const apiBase = process.env.REPLIT_DEV_DOMAIN
+  ? `https://${process.env.REPLIT_DEV_DOMAIN}`
+  : "http://localhost:8080";
+
 export default defineConfig({
   base: basePath,
+  define: {
+    "import.meta.env.VITE_API_BASE": JSON.stringify(apiBase),
+  },
   plugins: [
     react(),
     tailwindcss(),
