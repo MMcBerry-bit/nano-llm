@@ -21,6 +21,20 @@ function ones(shape: number[]): tf.Variable {
   return tf.variable(tf.ones(shape));
 }
 
+function float32ToBase64(arr: Float32Array): string {
+  const bytes = new Uint8Array(arr.buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function base64ToFloat32(b64: string): Float32Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Float32Array(bytes.buffer);
+}
+
 interface LNWeights { gamma: tf.Variable; beta: tf.Variable }
 interface AttnWeights { qkv: tf.Variable; proj: tf.Variable; projBias: tf.Variable }
 interface FFNWeights { w1: tf.Variable; b1: tf.Variable; w2: tf.Variable; b2: tf.Variable }
@@ -152,6 +166,24 @@ export class NanoTransformer {
     vars.push(this.lnFinal.gamma, this.lnFinal.beta);
     vars.push(this.lmHead);
     return vars;
+  }
+
+  getWeights(): Array<{ b64: string; shape: number[] }> {
+    return this.trainableVariables.map((v) => ({
+      b64: float32ToBase64(v.dataSync() as Float32Array),
+      shape: v.shape as number[],
+    }));
+  }
+
+  setWeights(weights: Array<{ b64: string; shape: number[] }>): void {
+    const vars = this.trainableVariables;
+    if (vars.length !== weights.length) throw new Error("Weight count mismatch");
+    vars.forEach((v, i) => {
+      const data = base64ToFloat32(weights[i].b64);
+      const tensor = tf.tensor(data, weights[i].shape as tf.Shape);
+      v.assign(tensor);
+      tensor.dispose();
+    });
   }
 
   dispose(): void {
