@@ -18,6 +18,15 @@ export interface TrainingState {
   losses: { step: number; loss: number }[];
 }
 
+export interface SavedState {
+  version: 1;
+  config: TrainingConfig & { vocabSize: number };
+  vocab: string[];
+  tokens: number[];
+  weights: Array<{ b64: string; shape: number[] }>;
+  losses: { step: number; loss: number }[];
+}
+
 export type TrainingCallback = (state: TrainingState) => void;
 
 export class NanoLLMTrainer {
@@ -94,7 +103,7 @@ export class NanoLLMTrainer {
     }
     this.shouldStop = false;
     const variables = this.transformer.trainableVariables;
-    let step = 0;
+    let step = this.losses.length;
 
     while (!this.shouldStop) {
       const { xTokens, yTokens } = this.getBatch();
@@ -197,6 +206,48 @@ export class NanoLLMTrainer {
 
   getLosses(): { step: number; loss: number }[] {
     return [...this.losses];
+  }
+
+  getState(): SavedState {
+    if (!this.transformer || !this.config) throw new Error("No trained model to save");
+    return {
+      version: 1,
+      config: { ...this.config, vocabSize: this.tokenizer.vocabSize },
+      vocab: this.tokenizer.getVocab(),
+      tokens: [...this.tokens],
+      weights: this.transformer.getWeights(),
+      losses: [...this.losses],
+    };
+  }
+
+  async loadState(state: SavedState): Promise<{
+    vocabSize: number;
+    tokenCount: number;
+    step: number;
+    losses: { step: number; loss: number }[];
+  }> {
+    const { contextLength, embeddingDim, numHeads, numLayers, learningRate, vocabSize } = state.config;
+
+    this.tokenizer.setVocab(state.vocab);
+    this.tokens = state.tokens;
+    this.config = { contextLength, embeddingDim, numHeads, numLayers, batchSize: this.config?.batchSize ?? 8, learningRate };
+    this.losses = [...state.losses];
+
+    if (this.transformer) { this.transformer.dispose(); this.transformer = null; }
+    if (this.optimizer) { this.optimizer.dispose?.(); this.optimizer = null; }
+
+    this.transformer = new NanoTransformer({ vocabSize, contextLength, embeddingDim, numHeads, numLayers });
+    this.transformer.setWeights(state.weights);
+    this.optimizer = tf.train.adam(learningRate);
+
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    return {
+      vocabSize,
+      tokenCount: state.tokens.length,
+      step: state.losses.length,
+      losses: [...state.losses],
+    };
   }
 }
 
