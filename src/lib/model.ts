@@ -22,7 +22,11 @@ function ones(shape: number[]): tf.Variable {
 }
 
 function float32ToBase64(arr: Float32Array): string {
-  const bytes = new Uint8Array(arr.buffer);
+  // TF.js dataSync() can return a Float32Array that is a view into a larger
+  // backing buffer (byteOffset > 0). Using arr.buffer directly would encode
+  // the whole underlying ArrayBuffer — extra bytes included — causing shape
+  // mismatches on restore. Slice to exactly the bytes owned by this view.
+  const bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
